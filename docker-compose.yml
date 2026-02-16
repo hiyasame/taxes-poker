@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: poker-backend
+    ports:
+      - "3001:3001"
+    networks:
+      - poker-network
+
+  frontend:
+    build: ./frontend
+    container_name: poker-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - poker-network
+
+networks:
+  poker-network:
+    driver: bridge

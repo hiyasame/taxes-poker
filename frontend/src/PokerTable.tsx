@@ -8,7 +8,7 @@ import { Card } from './components/Card';
 import { Trophy, Users, Bell, Coins, X } from 'lucide-react';
 import './App.css';
 
-const socket: Socket = io('http://localhost:3001');
+const socket: Socket = io();
 
 const PokerTable: React.FC = () => {
     const [game, setGame] = useState<GameView | null>(null);
