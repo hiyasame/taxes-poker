@@ -10,7 +10,7 @@ export interface PlayerView {
     stack: number;
     currentBet: number;
     status: PlayerStatus;
-    hand?: Card[]; // Only visible to the player themselves
+    hand?: Card[];
     isSelf: boolean;
     position: number;
     isDealer: boolean;
@@ -19,6 +19,9 @@ export interface PlayerView {
         type: string;
         amount?: number;
     };
+    hasViewedCards: boolean;
+    isReady: boolean;
+    seatIndex: number;
 }
 
 export interface GameView {
@@ -27,7 +30,11 @@ export interface GameView {
     pot: number;
     currentMaxBet: number;
     players: PlayerView[];
+    spectators: PlayerView[];
     me?: PlayerView;
-    winners?: string[]; // IDs of winners
-    currentHandType?: string; // e.g., "一对", "两对" - for the current player
+    winners?: string[];
+    currentHandType?: string;
+    isSpectator?: boolean;
+    totalContributed?: number;
+    availableSeats: number[];
 }

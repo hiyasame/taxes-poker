@@ -19,7 +19,8 @@ export const PlayerStatus = {
     Active: 'ACTIVE',
     Folded: 'FOLDED',
     AllIn: 'ALL_IN',
-    SittingOut: 'SITTING_OUT'
+    SittingOut: 'SITTING_OUT',
+    Spectator: 'SPECTATOR'
 } as const;
 
 export type PlayerStatus = typeof PlayerStatus[keyof typeof PlayerStatus];
@@ -57,6 +58,10 @@ export interface PlayerView {
         type: string;
         amount?: number;
     };
+    hasViewedCards: boolean;
+    isReady: boolean;
+    seatIndex: number;
+    isSpectator?: boolean;
 }
 
 export interface GameView {
@@ -65,7 +70,11 @@ export interface GameView {
     pot: number;
     currentMaxBet: number;
     players: PlayerView[];
+    spectators: PlayerView[];
     me?: PlayerView;
     winners?: string[];
     currentHandType?: string;
+    isSpectator?: boolean;
+    totalContributed?: number;
+    availableSeats: number[];
 }

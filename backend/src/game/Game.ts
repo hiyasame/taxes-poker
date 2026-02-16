@@ -23,6 +23,7 @@ export class Game {
     public currentMaxBet: number = 0;
     public dealerIndex: number = 0;
     public currentTurnIndex: number = 0;
+    public currentTurnPlayerId: string = '';
     public minBet: number = 20;
     public activePlayerCount: number = 0;
 
@@ -35,14 +36,16 @@ export class Game {
     }
 
     addPlayer(player: Player) {
-        if (this.state !== GameState.Waiting) {
+        if (this.state !== GameState.Waiting && !player.isSpectator) {
             throw new Error("Game in progress");
         }
         this.players.push(player);
     }
 
     startGame() {
-        if (this.players.length < 2) throw new Error("Not enough players");
+        const readyPlayers = this.players.filter(p => !p.isSpectator && p.isReady && p.isConnected);
+        if (readyPlayers.length < 2) throw new Error("至少需要2名准备的玩家");
+        
         this.state = GameState.Preflop;
         this.deck.reset();
         this.deck.shuffle();
@@ -51,34 +54,34 @@ export class Game {
         this.winners = [];
 
         this.players.forEach(p => {
-            p.resetForRound();
-            p.lastAction = undefined;
+            if (!p.isSpectator && p.isReady) {
+                p.resetForRound();
+                p.lastAction = undefined;
+            }
         });
-        this.activePlayerCount = this.players.filter(p => p.status !== PlayerStatus.SittingOut).length;
+        this.activePlayerCount = this.players.filter(p => p.status !== PlayerStatus.SittingOut && !p.isSpectator).length;
 
-        // Deal hole cards
         for (let i = 0; i < 2; i++) {
             this.players.forEach(p => {
-                if (p.status === PlayerStatus.Active) {
+                if (p.status === PlayerStatus.Active && !p.isSpectator) {
                     const card = this.deck.deal();
                     if (card) p.hand.push(card);
                 }
             });
         }
 
-        // Blinds
+        const activePlayers = this.players.filter(p => !p.isSpectator);
         let sbIndex, bbIndex;
-        if (this.players.length === 2) {
-            // Heads-up rules: Dealer is SB, other is BB
+        if (activePlayers.length === 2) {
             sbIndex = this.dealerIndex;
             bbIndex = (this.dealerIndex + 1) % 2;
         } else {
-            sbIndex = (this.dealerIndex + 1) % this.players.length;
-            bbIndex = (this.dealerIndex + 2) % this.players.length;
+            sbIndex = (this.dealerIndex + 1) % activePlayers.length;
+            bbIndex = (this.dealerIndex + 2) % activePlayers.length;
         }
 
-        const sbPlayer = this.players[sbIndex]!;
-        const bbPlayer = this.players[bbIndex]!;
+        const sbPlayer = activePlayers[sbIndex]!;
+        const bbPlayer = activePlayers[bbIndex]!;
 
         sbPlayer.bet(Math.min(sbPlayer.stack, this.minBet / 2));
         bbPlayer.bet(Math.min(bbPlayer.stack, this.minBet));
@@ -86,12 +89,13 @@ export class Game {
         this.currentMaxBet = this.minBet;
         this.playersActedCount = 0;
 
-        // Start turn: In Heads-up, Dealer acts first. In 3+, player after BB.
-        this.currentTurnIndex = (this.players.length === 2) ? sbIndex : (bbIndex + 1) % this.players.length;
+        this.currentTurnIndex = (activePlayers.length === 2) ? sbIndex : (bbIndex + 1) % activePlayers.length;
+        this.currentTurnPlayerId = activePlayers[this.currentTurnIndex]?.id || '';
     }
 
     handleAction(playerId: string, action: 'fold' | 'check' | 'call' | 'raise' | 'allin', amount?: number) {
-        const player = this.players[this.currentTurnIndex];
+        const activePlayers = this.players.filter(p => !p.isSpectator);
+        const player = activePlayers[this.currentTurnIndex];
         if (player.id !== playerId) throw new Error("Not your turn");
 
         player.lastAction = { type: action, amount };
@@ -120,7 +124,7 @@ export class Game {
                 if (raiseAmt > player.stack) throw new Error("Not enough chips");
                 player.bet(raiseAmt);
                 this.currentMaxBet = amount;
-                this.playersActedCount = 1; // Reset count, only raiser acted
+                this.playersActedCount = 1;
                 break;
             case 'allin':
                 player.bet(player.stack);
@@ -133,21 +137,12 @@ export class Game {
                 break;
         }
 
-        // Check if round complete
-        const activePlayers = this.players.filter(p => p.status === PlayerStatus.Active);
-        const allInPlayers = this.players.filter(p => p.status === PlayerStatus.AllIn);
+        const activeNonFolded = activePlayers.filter(p => p.status === PlayerStatus.Active);
+        const allInPlayers = activePlayers.filter(p => p.status === PlayerStatus.AllIn);
 
-        // Round ends if:
-        // 1. Only 1 active player left (others all-in or folded). Wait, if others all-in, we still play.
-        // 2. Everyone acted AND bets match.
+        const allMatched = activeNonFolded.every(p => p.currentBet === this.currentMaxBet);
 
-        const allMatched = activePlayers.every(p => p.currentBet === this.currentMaxBet);
-        // All-in players might have bet less.
-
-        // Simple logic: everyone active has acted at least once (playersActedCount >= activePlayers.length) AND bets matched.
-        // Note: activePlayers changes when someone folds.
-
-        if (allMatched && this.playersActedCount >= activePlayers.length) {
+        if (allMatched && this.playersActedCount >= activeNonFolded.length) {
             this.nextStage();
         } else {
             this.rotateTurn();
@@ -156,14 +151,15 @@ export class Game {
 
     rotateTurn() {
         let loop = 0;
+        const activePlayers = this.players.filter(p => !p.isSpectator);
         do {
-            this.currentTurnIndex = (this.currentTurnIndex + 1) % this.players.length;
+            this.currentTurnIndex = (this.currentTurnIndex + 1) % activePlayers.length;
             loop++;
         } while (
-            this.players[this.currentTurnIndex].status !== PlayerStatus.Active &&
-            loop < this.players.length
+            activePlayers[this.currentTurnIndex].status !== PlayerStatus.Active &&
+            loop < activePlayers.length
         );
-        // If loop >= length, we might be done or stuck? Check happens in handleAction usually.
+        this.currentTurnPlayerId = activePlayers[this.currentTurnIndex]?.id || '';
     }
 
     nextStage() {
@@ -215,15 +211,30 @@ export class Game {
         if (this.state === GameState.Showdown || this.state === GameState.Finished) return;
         this.state = GameState.Showdown;
 
-        // Evaluate all remaining players (Active + AllIn)
-        const survivors = this.players.filter(p => p.status === PlayerStatus.Active || p.status === PlayerStatus.AllIn);
-        if (survivors.length === 0) return; // Should not happen
+        const survivors = this.players.filter(p => (p.status === PlayerStatus.Active || p.status === PlayerStatus.AllIn) && !p.isSpectator);
+        if (survivors.length === 0) return;
 
         let bestHandRank = -1;
         let winners: Player[] = [];
 
         this.calculateAndDistributePots();
-        this.state = GameState.Finished;
+        this.resetToWaiting();
+    }
+
+    private resetToWaiting() {
+        this.state = GameState.Waiting;
+        this.players.forEach(p => {
+            p.isReady = false;
+        });
+    }
+
+    private promoteSpectators() {
+        this.players.forEach(p => {
+            if (p.isSpectator) {
+                p.isSpectator = false;
+                p.status = p.stack > 0 ? PlayerStatus.Active : PlayerStatus.SittingOut;
+            }
+        });
     }
 
     private calculateAndDistributePots() {
@@ -296,13 +307,12 @@ export class Game {
     }
 
     endHandPrematurely() {
-        const winner = this.players.find(p => p.status !== PlayerStatus.Folded);
+        const winner = this.players.find(p => p.status !== PlayerStatus.Folded && !p.isSpectator);
         if (winner) {
-            // Give all money currently in pot + pending bets
             const total = this.currentPot + this.players.reduce((sum, p) => sum + p.currentBet, 0);
             winner.stack += total;
             this.winners = [winner];
         }
-        this.state = GameState.Finished;
+        this.resetToWaiting();
     }
 }

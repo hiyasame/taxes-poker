@@ -5,7 +5,8 @@ export enum PlayerStatus {
     Active = 'ACTIVE',
     Folded = 'FOLDED',
     AllIn = 'ALL_IN',
-    SittingOut = 'SITTING_OUT'
+    SittingOut = 'SITTING_OUT',
+    Spectator = 'SPECTATOR'
 }
 
 export class Player {
@@ -15,15 +16,30 @@ export class Player {
     public hand: Card[] = [];
     public status: PlayerStatus = PlayerStatus.Active;
     public currentBet: number = 0;
-    public totalBetThisRound: number = 0; // Tracks total contributed in current betting round
-    public totalContributed: number = 0; // Tracks total contributed in the whole hand
-    public position: number = -1; // -1 if not seated
+    public totalBetThisRound: number = 0;
+    public totalContributed: number = 0;
+    public position: number = -1;
     public lastAction?: { type: string; amount?: number };
+    public isSpectator: boolean = false;
+    public hasViewedCards: boolean = false;
+    public ip: string = '';
+    public isConnected: boolean = true;
+    public username: string = '';
+    public password: string = '';
+    public isReady: boolean = false;
+    public seatIndex: number = -1;
 
-    constructor(id: string, name: string, stack: number) {
+    constructor(id: string, name: string, stack: number, isSpectator: boolean = false, ip: string = '', username: string = '', password: string = '') {
         this.id = id;
         this.name = name;
         this.stack = stack;
+        this.isSpectator = isSpectator;
+        this.ip = ip;
+        this.username = username;
+        this.password = password;
+        if (isSpectator) {
+            this.status = PlayerStatus.Spectator;
+        }
     }
 
     resetForRound() {
@@ -32,6 +48,7 @@ export class Player {
         this.currentBet = 0;
         this.totalBetThisRound = 0;
         this.totalContributed = 0;
+        this.hasViewedCards = false;
     }
 
     bet(amount: number): number {
