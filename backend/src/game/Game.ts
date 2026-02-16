@@ -30,6 +30,7 @@ export class Game {
     // Pot tracking
     private playersActedCount: number = 0;
     public winners: Player[] = [];
+    public lastRoundResults: Map<string, number> = new Map(); // playerId -> winAmount
 
     constructor() {
         this.deck = new Deck();
@@ -52,6 +53,7 @@ export class Game {
         this.communityCards = [];
         this.currentPot = 0;
         this.winners = [];
+        this.lastRoundResults.clear(); // 清空上一局结果
 
         this.players.forEach(p => {
             if (!p.isSpectator && p.isReady) {
@@ -239,6 +241,13 @@ export class Game {
 
     private calculateAndDistributePots() {
         const players = this.players;
+        
+        // 记录每个玩家本局开始前的筹码（用于计算输赢）
+        const startingStacks = new Map<string, number>();
+        players.forEach(p => {
+            startingStacks.set(p.id, p.stack + p.totalContributed);
+        });
+        
         const distinctBets = Array.from(new Set(players.map(p => p.totalContributed)))
             .filter(b => b > 0)
             .sort((a, b) => a - b);
@@ -276,6 +285,14 @@ export class Game {
 
             this.winners = Array.from(new Set([...this.winners, ...winners]));
         }
+        
+        // 计算每个玩家的输赢
+        this.lastRoundResults.clear();
+        players.forEach(p => {
+            const startStack = startingStacks.get(p.id) || 0;
+            const winAmount = p.stack - startStack;
+            this.lastRoundResults.set(p.id, winAmount);
+        });
     }
 
     private getWinnersAmong(candidates: Player[]): Player[] {
@@ -309,9 +326,21 @@ export class Game {
     endHandPrematurely() {
         const winner = this.players.find(p => p.status !== PlayerStatus.Folded && !p.isSpectator);
         if (winner) {
+            const startingStacks = new Map<string, number>();
+            this.players.forEach(p => {
+                startingStacks.set(p.id, p.stack + p.totalContributed);
+            });
+            
             const total = this.currentPot + this.players.reduce((sum, p) => sum + p.currentBet, 0);
             winner.stack += total;
             this.winners = [winner];
+            
+            this.lastRoundResults.clear();
+            this.players.forEach(p => {
+                const startStack = startingStacks.get(p.id) || 0;
+                const winAmount = p.stack - startStack;
+                this.lastRoundResults.set(p.id, winAmount);
+            });
         }
         this.resetToWaiting();
     }

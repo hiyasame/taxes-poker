@@ -24,6 +24,12 @@ export interface PlayerView {
     seatIndex: number;
 }
 
+export interface RoundResult {
+    playerId: string;
+    playerName: string;
+    winAmount: number; // 正数表示赢，负数表示输
+}
+
 export interface GameView {
     state: GameState;
     communityCards: Card[];
@@ -37,4 +43,5 @@ export interface GameView {
     isSpectator?: boolean;
     totalContributed?: number;
     availableSeats: number[];
+    lastRoundResults?: RoundResult[]; // 上一局的结算结果
 }

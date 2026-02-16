@@ -105,10 +105,19 @@
 .community-cards-pos {
   position: absolute;
   top: 44%;
-  /* Slightly higher */
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 5;
+}
+
+.settlement-info-pos {
+  position: absolute;
+  top: 56%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 50%;
+  max-width: 140px;
+  z-index: 10;
 }
 
 .pot-pos {
@@ -836,4 +845,33 @@
   left: 2rem;
   transform: scale(0.8);
   pointer-events: auto;
+}
+
+/* Modal Overlays */
+.modal-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+.reconnect-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
 }

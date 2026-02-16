@@ -25,8 +25,21 @@ const PokerTable: React.FC = () => {
     const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null);
     const [joinError, setJoinError] = useState<string>('');
     const [isConnected, setIsConnected] = useState(false);
+    const [waitingReconnect, setWaitingReconnect] = useState<{ playerName: string; countdown: number } | null>(null);
+    const [viewHandRequest, setViewHandRequest] = useState<{ requesterId: string; requesterName: string } | null>(null);
     const lastStateRef = useRef<GameView | null>(null);
     const loginCredentials = useRef<{ username: string; password: string } | null>(null);
+    const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+    // 加载保存的账号密码
+    useEffect(() => {
+        const savedUsername = localStorage.getItem('poker_username');
+        const savedPassword = localStorage.getItem('poker_password');
+        if (savedUsername && savedPassword) {
+            setName(savedUsername);
+            setPassword(savedPassword);
+        }
+    }, []);
 
     const notify = (message: string, type: 'info' | 'alert' = 'info') => {
         setNotification({ message, type });
@@ -97,16 +110,97 @@ const PokerTable: React.FC = () => {
             }
         };
 
+        const handlePlayerLeft = (data: { playerName: string; message: string }) => {
+            notify(data.message, 'alert');
+            setWaitingReconnect(null);
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+                countdownIntervalRef.current = null;
+            }
+        };
+
+        const handleWaitingForReconnect = (data: { playerName: string; message: string; countdown: number }) => {
+            notify(data.message, 'alert');
+            setWaitingReconnect({ playerName: data.playerName, countdown: data.countdown });
+            
+            // 启动倒计时
+            let timeLeft = data.countdown;
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+            }
+            countdownIntervalRef.current = setInterval(() => {
+                timeLeft -= 1;
+                setWaitingReconnect(prev => prev ? { ...prev, countdown: timeLeft } : null);
+                if (timeLeft <= 0 && countdownIntervalRef.current) {
+                    clearInterval(countdownIntervalRef.current);
+                    countdownIntervalRef.current = null;
+                }
+            }, 1000);
+        };
+
+        const handleAdditionalPlayerLeft = (data: { playerName: string; message: string }) => {
+            notify(data.message, 'alert');
+            // 不改变倒计时，继续等待
+        };
+
+        const handleAllPlayersReconnected = (data: { message: string }) => {
+            notify(data.message, 'info');
+            setWaitingReconnect(null);
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+                countdownIntervalRef.current = null;
+            }
+        };
+
+        const handlePlayerReconnected = (data: { playerName: string; message: string }) => {
+            notify(data.message, 'info');
+        };
+
+        const handleViewHandRequest = (data: { requesterId: string; requesterName: string }) => {
+            console.log('Received viewHandRequest:', data);
+            console.log('Current viewHandRequest state:', viewHandRequest);
+            setViewHandRequest(data);
+            notify(`${data.requesterName} 想要查看你的手牌`, 'alert');
+        };
+
+        const handleViewHandApproved = (data: { targetId: string; targetName: string }) => {
+            notify(`${data.targetName} 同意了你的查看请求`, 'info');
+        };
+
+        const handleViewHandDenied = (data: { targetId: string; targetName: string }) => {
+            notify(`${data.targetName} 拒绝了你的查看请求`, 'info');
+        };
+
         socket.on('connect', handleConnect);
         socket.on('disconnect', handleDisconnect);
         socket.on('state', handleState);
         socket.on('error', handleError);
+        socket.on('playerLeft', handlePlayerLeft);
+        socket.on('waitingForReconnect', handleWaitingForReconnect);
+        socket.on('additionalPlayerLeft', handleAdditionalPlayerLeft);
+        socket.on('playerReconnected', handlePlayerReconnected);
+        socket.on('allPlayersReconnected', handleAllPlayersReconnected);
+        socket.on('viewHandRequest', handleViewHandRequest);
+        socket.on('viewHandApproved', handleViewHandApproved);
+        socket.on('viewHandDenied', handleViewHandDenied);
 
         return () => {
             socket.off('connect', handleConnect);
             socket.off('disconnect', handleDisconnect);
             socket.off('state', handleState);
             socket.off('error', handleError);
+            socket.off('playerLeft', handlePlayerLeft);
+            socket.off('waitingForReconnect', handleWaitingForReconnect);
+            socket.off('additionalPlayerLeft', handleAdditionalPlayerLeft);
+            socket.off('playerReconnected', handlePlayerReconnected);
+            socket.off('allPlayersReconnected', handleAllPlayersReconnected);
+            socket.off('viewHandRequest', handleViewHandRequest);
+            socket.off('viewHandApproved', handleViewHandApproved);
+            socket.off('viewHandDenied', handleViewHandDenied);
+            
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+            }
         };
     }, [joined]);
 
@@ -114,6 +208,11 @@ const PokerTable: React.FC = () => {
         if (name && password) {
             setJoinError('');
             loginCredentials.current = { username: name, password };
+            
+            // 保存账号密码到 localStorage
+            localStorage.setItem('poker_username', name);
+            localStorage.setItem('poker_password', password);
+            
             socket.emit('login', { username: name, password });
         }
     };
@@ -141,6 +240,32 @@ const PokerTable: React.FC = () => {
 
     const handleLeaveTable = () => {
         socket.emit('leaveTable');
+    };
+
+    const handleRequestViewHand = (targetPlayerId: string) => {
+        console.log('Requesting to view hand of:', targetPlayerId);
+        if (game?.state === GameState.Waiting) {
+            socket.emit('requestViewHand', targetPlayerId);
+            notify('已发送查看手牌请求', 'info');
+        } else {
+            console.log('Game state is not Waiting:', game?.state);
+        }
+    };
+
+    const handleApproveViewRequest = () => {
+        if (viewHandRequest) {
+            socket.emit('approveViewRequest', viewHandRequest.requesterId);
+            notify(`已同意 ${viewHandRequest.requesterName} 的查看请求`, 'info');
+            setViewHandRequest(null);
+        }
+    };
+
+    const handleDenyViewRequest = () => {
+        if (viewHandRequest) {
+            socket.emit('denyViewRequest', viewHandRequest.requesterId);
+            notify(`已拒绝 ${viewHandRequest.requesterName} 的查看请求`, 'info');
+            setViewHandRequest(null);
+        }
     };
 
     const getPlayerAtSeat = (seatIndex: number) => {
@@ -197,8 +322,57 @@ const PokerTable: React.FC = () => {
     const minRaise = game.currentMaxBet * 2 || 40;
     const maxRaise = hero?.stack || 0;
 
+    console.log('viewHandRequest state:', viewHandRequest);
+
     return (
         <div id="mobile-container" className="relative overflow-hidden">
+            {/* 查看手牌请求弹窗 */}
+            {viewHandRequest && (
+                <div className="modal-overlay">
+                    <div className="glass p-6 rounded-2xl text-center max-w-sm animate-zoom-in m-4">
+                        <div className="text-5xl mb-4">👀</div>
+                        <div className="text-white text-lg font-bold mb-2">
+                            查看手牌请求
+                        </div>
+                        <div className="text-white/80 text-sm mb-6">
+                            <span className="text-yellow-500 font-bold">{viewHandRequest.requesterName}</span> 想要查看你的手牌
+                        </div>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={handleDenyViewRequest}
+                                className="flex-1 py-3 rounded-xl bg-gray-600 text-white font-bold shadow-lg active:scale-95 transition-all"
+                            >
+                                拒绝
+                            </button>
+                            <button
+                                onClick={handleApproveViewRequest}
+                                className="flex-1 py-3 rounded-xl bg-green-600 text-white font-bold shadow-lg active:scale-95 transition-all"
+                            >
+                                同意
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 等待重连遮罩 */}
+            {waitingReconnect && (
+                <div className="reconnect-overlay">
+                    <div className="glass p-8 rounded-2xl text-center max-w-sm animate-zoom-in">
+                        <div className="text-6xl mb-4">⏳</div>
+                        <div className="text-white text-xl font-bold mb-2">
+                            等待 {waitingReconnect.playerName} 重连
+                        </div>
+                        <div className="text-yellow-500 text-4xl font-black mb-4">
+                            {waitingReconnect.countdown}s
+                        </div>
+                        <div className="text-white/60 text-sm">
+                            游戏已暂停，请等待玩家重新连接...
+                        </div>
+                    </div>
+                </div>
+            )}
+            
             {!isConnected && (
                 <div className="absolute top-2 right-2 z-50 glass px-3 py-1 rounded-full animate-pulse">
                     <div className="flex items-center gap-2 text-red-400 text-xs font-bold">
@@ -226,6 +400,25 @@ const PokerTable: React.FC = () => {
             <div className="poker-table">
                 <div className="poker-felt-texture" />
 
+                {/* 当前操作玩家提示 */}
+                {game.state !== GameState.Waiting && game.state !== GameState.Finished && (() => {
+                    const currentPlayer = game.players.find(p => p.isCurrentTurn);
+                    if (currentPlayer) {
+                        const callAmount = game.currentMaxBet - (currentPlayer.currentBet || 0);
+                        return (
+                            <div className="absolute top-[15%] left-1/2 -translate-x-1/2 z-20 glass px-4 py-2 rounded-full animate-pulse">
+                                <div className="text-yellow-500 font-bold text-sm">
+                                    {currentPlayer.isSelf 
+                                        ? (callAmount > 0 
+                                            ? `等待您操作... (需跟注 $${callAmount})` 
+                                            : '等待您操作...')
+                                        : `等待 ${currentPlayer.name} 操作...`}
+                                </div>
+                            </div>
+                        );
+                    }
+                })()}
+
                 <div className="pot-pos text-center w-full scale-90">
                     <span className="text-[10px] text-white/40 font-bold uppercase tracking-widest">TOTAL POT</span>
                     <div className="text-3xl font-black text-yellow-500 flex items-center justify-center gap-2">
@@ -246,6 +439,38 @@ const PokerTable: React.FC = () => {
                     ))}
                 </div>
 
+                {/* 上一局结算信息 */}
+                {game.state === GameState.Waiting && game.lastRoundResults && game.lastRoundResults.length > 0 && (
+                    <div className="settlement-info-pos">
+                        <div className="glass rounded-xl p-3 border border-white/20">
+                            <div className="text-center text-[10px] text-white/50 uppercase tracking-wider mb-2 font-bold">
+                                上局结算
+                            </div>
+                            <div className="space-y-1">
+                                {game.lastRoundResults.map((result) => (
+                                    <div 
+                                        key={result.playerId} 
+                                        className="flex justify-between items-center text-xs"
+                                    >
+                                        <span className="text-white/80 truncate max-w-[120px]">
+                                            {result.playerName}
+                                        </span>
+                                        <span className={`font-bold ${
+                                            result.winAmount > 0 
+                                                ? 'text-green-400' 
+                                                : result.winAmount < 0 
+                                                ? 'text-red-400' 
+                                                : 'text-white/60'
+                                        }`}>
+                                            {result.winAmount > 0 ? '+' : ''}{result.winAmount}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="absolute inset-0 pointer-events-none">
                     {/* 12个座位时钟式布局 - 相对视角 */}
                     {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(visualSeat => {
@@ -260,11 +485,11 @@ const PokerTable: React.FC = () => {
                                 {player ? (
                                     <Player 
                                         player={player} 
-                                        onViewCards={player.isSelf ? handleViewCards : undefined} 
+                                        onViewCards={player.isSelf ? handleViewCards : undefined}
+                                        onRequestViewHand={!player.isSelf ? handleRequestViewHand : undefined}
                                         gameState={game.state} 
                                     />
                                 ) : (
-                                    // 只在等待状态下显示空座位
                                     game.state === GameState.Waiting && (
                                         <EmptySeat 
                                             seatIndex={actualSeat} 

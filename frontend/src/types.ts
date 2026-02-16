@@ -64,6 +64,12 @@ export interface PlayerView {
     isSpectator?: boolean;
 }
 
+export interface RoundResult {
+    playerId: string;
+    playerName: string;
+    winAmount: number;
+}
+
 export interface GameView {
     state: GameState;
     communityCards: Card[];
@@ -77,4 +83,5 @@ export interface GameView {
     isSpectator?: boolean;
     totalContributed?: number;
     availableSeats: number[];
+    lastRoundResults?: RoundResult[];
 }

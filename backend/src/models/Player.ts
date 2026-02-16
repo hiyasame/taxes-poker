@@ -28,6 +28,7 @@ export class Player {
     public password: string = '';
     public isReady: boolean = false;
     public seatIndex: number = -1;
+    public allowedViewers: Set<string> = new Set(); // 允许查看手牌的玩家ID列表
 
     constructor(id: string, name: string, stack: number, isSpectator: boolean = false, ip: string = '', username: string = '', password: string = '') {
         this.id = id;
@@ -49,6 +50,7 @@ export class Player {
         this.totalBetThisRound = 0;
         this.totalContributed = 0;
         this.hasViewedCards = false;
+        this.allowedViewers.clear();
     }
 
     bet(amount: number): number {

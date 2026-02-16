@@ -7,11 +7,20 @@ import { User, Coins, Eye, EyeOff } from 'lucide-react';
 export const Player: React.FC<{ 
     player: PlayerView; 
     onViewCards?: () => void;
+    onRequestViewHand?: (targetPlayerId: string) => void;
     gameState?: GameState;
-}> = ({ player, onViewCards, gameState }) => {
+}> = ({ player, onViewCards, onRequestViewHand, gameState }) => {
     const isFolded = player.status === PlayerStatus.Folded;
     const isActive = player.status === PlayerStatus.Active || player.status === PlayerStatus.AllIn;
     const isWaitingOrFinished = gameState === GameState.Waiting || gameState === GameState.Finished;
+
+    const handleCardClick = () => {
+        if (player.isSelf && !isWaitingOrFinished) {
+            onViewCards?.();
+        } else if (!player.isSelf && gameState === GameState.Waiting && onRequestViewHand) {
+            onRequestViewHand(player.id);
+        }
+    };
 
     return (
         <div className={`player-seat ${isFolded ? 'folded' : ''} ${player.isCurrentTurn ? 'active-turn' : ''}`}>
@@ -24,28 +33,44 @@ export const Player: React.FC<{
 
             {/* Hand */}
             <div 
-                className={`player-hand ${player.isSelf && !isWaitingOrFinished ? 'cursor-pointer' : ''}`}
-                onClick={player.isSelf && !isWaitingOrFinished ? onViewCards : undefined}
+                className={`player-hand ${
+                    (player.isSelf && gameState === GameState.Waiting && player.totalContributed > 0) ||
+                    (player.isSelf && !isWaitingOrFinished) || 
+                    (!player.isSelf && gameState === GameState.Waiting && player.totalContributed > 0) 
+                        ? 'cursor-pointer' 
+                        : ''
+                }`}
+                onClick={handleCardClick}
             >
-                {!isWaitingOrFinished && player.isSelf && player.hand && player.hand.length > 0 && player.hasViewedCards ? (
-                    // 自己的牌且已查看 - 显示牌面
+                {player.isSelf && player.hasViewedCards && player.hand && player.hand.length > 0 ? (
                     player.hand.map((c, i) => (
                         <Card key={i} card={c} />
                     ))
-                ) : !isWaitingOrFinished && player.hand && player.hand.length > 0 ? (
-                    // 其他人的牌（摊牌时） - 显示牌面
+                ) : player.isSelf && !player.hasViewedCards && player.hand && player.hand.length > 0 && !isWaitingOrFinished ? (
+                    <>
+                        <Card hidden />
+                        <Card hidden />
+                    </>
+                ) : player.isSelf && !player.hasViewedCards && gameState === GameState.Waiting && player.totalContributed > 0 ? (
+                    <>
+                        <Card hidden />
+                        <Card hidden />
+                    </>
+                ) : !player.isSelf && player.hand && player.hand.length > 0 ? (
                     player.hand.map((c, i) => (
                         <Card key={i} card={c} />
                     ))
-                ) : (
-                    !isWaitingOrFinished && isActive && (
-                        // 未查看或背面
-                        <>
-                            <Card hidden />
-                            <Card hidden />
-                        </>
-                    )
-                )}
+                ) : !player.isSelf && gameState === GameState.Waiting && !player.hand && player.totalContributed > 0 ? (
+                    <>
+                        <Card hidden />
+                        <Card hidden />
+                    </>
+                ) : !player.isSelf && !isWaitingOrFinished && isActive ? (
+                    <>
+                        <Card hidden />
+                        <Card hidden />
+                    </>
+                ) : null}
             </div>
 
             {/* Avatar & Info */}
