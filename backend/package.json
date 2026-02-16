@@ -7,11 +7,6 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "test": "jest"
-=======
-    "test": "jest",
-    "start": "ts-node src/server.ts",
-    "dev": "ts-node src/server.ts"
->>>>>>> aa120fdfbf496e8815626e14faf8c9c81e11d2ae
   },
   "keywords": [],
   "author": "",
