@@ -9,9 +9,7 @@ import { Card } from './components/Card';
 import { Users, Bell, Coins, X } from 'lucide-react';
 import './App.css';
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || `http://${window.location.hostname}:3001`;
-
-const socket: Socket = io(SOCKET_URL, {
+const socket: Socket = io({
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionAttempts: 10
@@ -69,7 +67,7 @@ const PokerTable: React.FC = () => {
                 setJoined(true);
                 setJoinError('');
             }
-            
+
             if (lastStateRef.current) {
                 const prevGame = lastStateRef.current;
 
@@ -225,7 +223,6 @@ const PokerTable: React.FC = () => {
     };
 
     const handleStart = () => {
-        console.log('startGame');
         socket.emit('startGame');
     };
 
@@ -325,8 +322,6 @@ const PokerTable: React.FC = () => {
     const minRaise = game.currentMaxBet || 10;
     const maxRaise = hero?.stack || 0;
 
-    console.log('viewHandRequest state:', viewHandRequest);
-
     return (
         <div id="mobile-container" className="relative overflow-hidden">
             {/* 查看手牌请求弹窗 */}
@@ -411,9 +406,9 @@ const PokerTable: React.FC = () => {
                         return (
                             <div className="glass current-player-indicator">
                                 <div className="current-player-text">
-                                    {currentPlayer.isSelf 
-                                        ? (callAmount > 0 
-                                            ? `等待您操作... (需跟注 $${callAmount})` 
+                                    {currentPlayer.isSelf
+                                        ? (callAmount > 0
+                                            ? `等待您操作... (需跟注 $${callAmount})`
                                             : '等待您操作...')
                                         : `等待 ${currentPlayer.name} 操作...`}
                                 </div>
@@ -456,10 +451,10 @@ const PokerTable: React.FC = () => {
                                             {result.playerName}
                                         </span>
                                         <span className={
-                                            result.winAmount > 0 
-                                                ? 'settlement-amount-win' 
-                                                : result.winAmount < 0 
-                                                ? 'settlement-amount-lose' 
+                                            result.winAmount > 0
+                                                ? 'settlement-amount-win'
+                                                : result.winAmount < 0
+                                                ? 'settlement-amount-lose'
                                                 : 'settlement-amount-neutral'
                                         }>
                                             {result.winAmount > 0 ? '+' : ''}{result.winAmount}
@@ -606,7 +601,7 @@ const PokerTable: React.FC = () => {
                     </div>
 
                     <div className="raise-amount-controls">
-                        <button 
+                        <button
                             className="raise-control-button"
                             onClick={() => setRaiseAmount(Math.max(minRaise, raiseAmount - 10))}
                         >
@@ -627,7 +622,7 @@ const PokerTable: React.FC = () => {
                                 <span>MAX ${maxRaise}</span>
                             </div>
                         </div>
-                        <button 
+                        <button
                             className="raise-control-button"
                             onClick={() => setRaiseAmount(Math.min(maxRaise, raiseAmount + 10))}
                         >
