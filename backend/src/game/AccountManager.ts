@@ -9,10 +9,8 @@ interface Account {
 
 export class AccountManager {
     private accounts: Map<string, Account> = new Map();
-    private enableAccountRestriction: boolean;
 
-    constructor(enableAccountRestriction: boolean = false) {
-        this.enableAccountRestriction = enableAccountRestriction;
+    constructor() {
     }
 
     register(username: string, password: string): { success: boolean; message?: string } {
@@ -45,7 +43,7 @@ export class AccountManager {
             return { success: false, message: '密码错误' };
         }
 
-        if (this.enableAccountRestriction && account.isOnline) {
+        if (account.isOnline) {
             return { success: false, message: `账号"${username}"已在线，无法登录` };
         }
 

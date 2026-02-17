@@ -11,8 +11,8 @@ export interface PlayerView {
     currentBet: number;
     status: PlayerStatus;
     hand?: Card[];
+    hasHand: boolean;
     isSelf: boolean;
-    position: number;
     isDealer: boolean;
     isCurrentTurn: boolean;
     lastAction?: {

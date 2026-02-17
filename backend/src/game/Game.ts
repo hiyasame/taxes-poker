@@ -1,22 +1,22 @@
-
-import { Deck } from '../models/Deck';
-import { Player, PlayerStatus } from '../models/Player';
-import { HandEvaluator } from './HandEvaluator';
-import { Card } from '../models/Card';
+import {Deck} from '../models/Deck';
+import {Player, PlayerStatus} from '../models/Player';
+import {HandEvaluator} from './HandEvaluator';
+import {Card} from '../models/Card';
 
 export enum GameState {
-    Waiting = 'WAITING',
-    Preflop = 'PREFLOP',
-    Flop = 'FLOP',
-    Turn = 'TURN',
-    River = 'RIVER',
-    Showdown = 'SHOWDOWN',
-    Finished = 'FINISHED'
+    Waiting = 'WAITING',    // 准备阶段
+    Preflop = 'PREFLOP',    // 开始游戏，但在翻牌前
+    Flop = 'FLOP',          // 翻了三种
+    Turn = 'TURN',          // 翻了第四张
+    River = 'RIVER',        // 翻了第五张
+    Showdown = 'SHOWDOWN',  // 比牌
 }
 
 export class Game {
     public deck: Deck;
-    public players: Player[] = [];
+    public players: Player[] = []; // 所有玩家
+    public initActivePlayers: Player[] = []; // 参与当前局的玩家
+    public activePlayers: Player[] = []; // 当前局剩下的玩家
     public communityCards: Card[] = [];
     public state: GameState = GameState.Waiting;
     public currentPot: number = 0;
@@ -25,7 +25,6 @@ export class Game {
     public currentTurnIndex: number = 0;
     public currentTurnPlayerId: string = '';
     public minBet: number = 20;
-    public activePlayerCount: number = 0;
 
     // Pot tracking
     private playersActedCount: number = 0;
@@ -36,17 +35,11 @@ export class Game {
         this.deck = new Deck();
     }
 
-    addPlayer(player: Player) {
-        if (this.state !== GameState.Waiting && !player.isSpectator) {
-            throw new Error("Game in progress");
-        }
-        this.players.push(player);
-    }
-
     startGame() {
-        const readyPlayers = this.players.filter(p => !p.isSpectator && p.isReady && p.isConnected);
-        if (readyPlayers.length < 2) throw new Error("至少需要2名准备的玩家");
-        
+        const noReadyPlayers = this.players.filter(p => !p.isSpectator && !p.isReady);
+        if (noReadyPlayers.length !== 0) throw new Error("需要所有就坐玩家都准备才可开始");
+        if (this.state !== GameState.Waiting) throw new Error("已经在牌局中了");
+
         this.state = GameState.Preflop;
         this.deck.reset();
         this.deck.shuffle();
@@ -54,36 +47,28 @@ export class Game {
         this.currentPot = 0;
         this.winners = [];
         this.lastRoundResults.clear(); // 清空上一局结果
-
-        this.players.forEach(p => {
-            if (!p.isSpectator && p.isReady) {
-                p.resetForRound();
-                p.lastAction = undefined;
-            }
+        this.activePlayers = this.players.filter(p => !p.isSpectator && p.isReady)
+            .sort((a, b) => a.seatIndex - b.seatIndex);
+        this.initActivePlayers = this.activePlayers;
+        this.initActivePlayers.forEach(p => {
+            p.resetForRound();
+            p.lastAction = undefined;
         });
-        this.activePlayerCount = this.players.filter(p => p.status !== PlayerStatus.SittingOut && !p.isSpectator).length;
 
+        // 发牌
         for (let i = 0; i < 2; i++) {
-            this.players.forEach(p => {
-                if (p.status === PlayerStatus.Active && !p.isSpectator) {
-                    const card = this.deck.deal();
-                    if (card) p.hand.push(card);
-                }
+            this.initActivePlayers.forEach(p => {
+                const card = this.deck.deal();
+                if (card) p.hand.push(card);
             });
         }
 
-        const activePlayers = this.players.filter(p => !p.isSpectator);
-        let sbIndex, bbIndex;
-        if (activePlayers.length === 2) {
-            sbIndex = this.dealerIndex;
-            bbIndex = (this.dealerIndex + 1) % 2;
-        } else {
-            sbIndex = (this.dealerIndex + 1) % activePlayers.length;
-            bbIndex = (this.dealerIndex + 2) % activePlayers.length;
-        }
+        // 大小盲，采用随机计算
+        const sbIndex = Math.floor(Math.random() * this.initActivePlayers.length);
+        const bbIndex = (sbIndex + 1) % this.initActivePlayers.length;
 
-        const sbPlayer = activePlayers[sbIndex]!;
-        const bbPlayer = activePlayers[bbIndex]!;
+        const sbPlayer = this.initActivePlayers[sbIndex]!;
+        const bbPlayer = this.initActivePlayers[bbIndex]!;
 
         sbPlayer.bet(Math.min(sbPlayer.stack, this.minBet / 2));
         bbPlayer.bet(Math.min(bbPlayer.stack, this.minBet));
@@ -91,22 +76,23 @@ export class Game {
         this.currentMaxBet = this.minBet;
         this.playersActedCount = 0;
 
-        this.currentTurnIndex = (activePlayers.length === 2) ? sbIndex : (bbIndex + 1) % activePlayers.length;
-        this.currentTurnPlayerId = activePlayers[this.currentTurnIndex]?.id || '';
+        // 当前该谁来下注，因为大小盲是下注的固定值，所以开始是大盲后一个人
+        this.currentTurnIndex = (bbIndex + 1) % this.initActivePlayers.length;
+        this.currentTurnPlayerId = this.initActivePlayers[this.currentTurnIndex].id;
     }
 
     handleAction(playerId: string, action: 'fold' | 'check' | 'call' | 'raise' | 'allin', amount?: number) {
-        const activePlayers = this.players.filter(p => !p.isSpectator);
-        const player = activePlayers[this.currentTurnIndex];
+        const player = this.initActivePlayers[this.currentTurnIndex];
         if (player.id !== playerId) throw new Error("Not your turn");
 
         player.lastAction = { type: action, amount };
 
         switch (action) {
-            case 'fold':
+            case 'fold': // 弃牌
                 player.fold();
-                this.activePlayerCount--;
-                if (this.activePlayerCount === 1) {
+                this.activePlayers = this.activePlayers.filter(p => p.id !== player.id);
+                if (this.activePlayers.length === 1) {
+                    // 如果弃牌后玩家只剩一个
                     this.endHandPrematurely();
                     return;
                 }
@@ -139,12 +125,9 @@ export class Game {
                 break;
         }
 
-        const activeNonFolded = activePlayers.filter(p => p.status === PlayerStatus.Active);
-        const allInPlayers = activePlayers.filter(p => p.status === PlayerStatus.AllIn);
+        const allMatched = this.activePlayers.every(p => p.currentBet === this.currentMaxBet);
 
-        const allMatched = activeNonFolded.every(p => p.currentBet === this.currentMaxBet);
-
-        if (allMatched && this.playersActedCount >= activeNonFolded.length) {
+        if (allMatched && this.playersActedCount >= this.activePlayers.length) {
             this.nextStage();
         } else {
             this.rotateTurn();
@@ -153,20 +136,19 @@ export class Game {
 
     rotateTurn() {
         let loop = 0;
-        const activePlayers = this.players.filter(p => !p.isSpectator);
         do {
-            this.currentTurnIndex = (this.currentTurnIndex + 1) % activePlayers.length;
+            this.currentTurnIndex = (this.currentTurnIndex + 1) % this.initActivePlayers.length;
             loop++;
         } while (
-            activePlayers[this.currentTurnIndex].status !== PlayerStatus.Active &&
-            loop < activePlayers.length
+            this.initActivePlayers[this.currentTurnIndex].status !== PlayerStatus.Active &&
+            loop < this.initActivePlayers.length
         );
-        this.currentTurnPlayerId = activePlayers[this.currentTurnIndex]?.id || '';
+        this.currentTurnPlayerId = this.initActivePlayers[this.currentTurnIndex].id;
     }
 
     nextStage() {
         // Collect bets
-        this.players.forEach(p => {
+        this.initActivePlayers.forEach(p => {
             this.currentPot += p.currentBet;
             p.currentBet = 0;
             p.lastAction = undefined; // Clear action icons/tags for new stage
@@ -210,14 +192,11 @@ export class Game {
     }
 
     showdown() {
-        if (this.state === GameState.Showdown || this.state === GameState.Finished) return;
+        if (this.state === GameState.Showdown) return;
         this.state = GameState.Showdown;
 
-        const survivors = this.players.filter(p => (p.status === PlayerStatus.Active || p.status === PlayerStatus.AllIn) && !p.isSpectator);
+        const survivors = this.activePlayers;
         if (survivors.length === 0) return;
-
-        let bestHandRank = -1;
-        let winners: Player[] = [];
 
         this.calculateAndDistributePots();
         this.resetToWaiting();
@@ -230,25 +209,14 @@ export class Game {
         });
     }
 
-    private promoteSpectators() {
-        this.players.forEach(p => {
-            if (p.isSpectator) {
-                p.isSpectator = false;
-                p.status = p.stack > 0 ? PlayerStatus.Active : PlayerStatus.SittingOut;
-            }
-        });
-    }
-
     private calculateAndDistributePots() {
-        const players = this.players;
-        
         // 记录每个玩家本局开始前的筹码（用于计算输赢）
         const startingStacks = new Map<string, number>();
-        players.forEach(p => {
-            startingStacks.set(p.id, p.stack + p.totalContributed);
+        this.initActivePlayers.forEach(p => {
+            startingStacks.set(p.name, p.stack + p.totalContributed);
         });
         
-        const distinctBets = Array.from(new Set(players.map(p => p.totalContributed)))
+        const distinctBets = Array.from(new Set(this.initActivePlayers.map(p => p.totalContributed)))
             .filter(b => b > 0)
             .sort((a, b) => a - b);
 
@@ -257,7 +225,7 @@ export class Game {
 
         for (const level of distinctBets) {
             const contributionPerPlayer = level - previousLevel;
-            const contributors = players.filter(p => p.totalContributed >= level);
+            const contributors = this.initActivePlayers.filter(p => p.totalContributed >= level);
             const amount = contributionPerPlayer * contributors.length;
 
             // Only players who haven't folded are eligible to win a pot
@@ -288,8 +256,8 @@ export class Game {
         
         // 计算每个玩家的输赢
         this.lastRoundResults.clear();
-        players.forEach(p => {
-            const startStack = startingStacks.get(p.id) || 0;
+        this.initActivePlayers.forEach(p => {
+            const startStack = startingStacks.get(p.name) || 0;
             const winAmount = p.stack - startStack;
             this.lastRoundResults.set(p.id, winAmount);
         });
@@ -324,7 +292,7 @@ export class Game {
     }
 
     endHandPrematurely() {
-        const winner = this.players.find(p => p.status !== PlayerStatus.Folded && !p.isSpectator);
+        const winner = this.activePlayers[0];
         if (winner) {
             const startingStacks = new Map<string, number>();
             this.players.forEach(p => {

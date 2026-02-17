@@ -14,9 +14,8 @@ const io = new Server(httpServer, {
     }
 });
 
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-const lobby = new Lobby(IS_PRODUCTION);
-const accountManager = new AccountManager(IS_PRODUCTION);
+const lobby = new Lobby();
+const accountManager = new AccountManager();
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
@@ -44,7 +43,7 @@ io.on('connection', (socket) => {
         }
         
         const stack = loginResult.stack || 1000;
-        const result = lobby.addPlayer(socket.id, username, stack, clientIp, username, password);
+        const result = lobby.addPlayer(socket.id, username, stack, password);
         
         // 检查错误情况
         if (result && typeof result === 'object' && 'error' in result) {
@@ -54,13 +53,7 @@ io.on('connection', (socket) => {
                 console.log(`Room full, ${username} cannot join`);
                 socket.emit('error', {
                     type: 'ROOM_FULL',
-                    message: '房间已满（最多6人），请稍后再试'
-                });
-            } else if (result.error === 'IP_ALREADY_CONNECTED') {
-                console.log(`IP duplicate detected for ${username}, existing player: ${result.existingPlayer}`);
-                socket.emit('error', {
-                    type: 'IP_ALREADY_CONNECTED',
-                    message: `该IP已有玩家"${result.existingPlayer}"在线，请关闭旧窗口后重试`
+                    message: '房间已满，请稍后再试'
                 });
             }
             return;
@@ -72,7 +65,7 @@ io.on('connection', (socket) => {
         // 检查是否所有玩家都重连了
         if (result && typeof result === 'object' && 'allReconnected' in result) {
             console.log('All players reconnected value:', result.allReconnected);
-            if (result.allReconnected === true) {
+            if (result.allReconnected) {
                 console.log('Emitting allPlayersReconnected event');
                 io.emit('allPlayersReconnected', {
                     message: '所有玩家已重连，游戏继续'
@@ -80,31 +73,6 @@ io.on('connection', (socket) => {
             }
         }
         
-        broadcastState();
-    });
-
-    socket.on('join', (name: string) => {
-        console.log(`Player ${name} trying to join from IP: ${clientIp}`);
-        const result = lobby.addPlayer(socket.id, name, 1000, clientIp);
-        
-        if (result && typeof result === 'object' && 'error' in result) {
-            if (result.error === 'ROOM_FULL') {
-                console.log(`Room full, ${name} cannot join`);
-                socket.emit('error', {
-                    type: 'ROOM_FULL',
-                    message: '房间已满（最多6人），请稍后再试'
-                });
-            } else if (result.error === 'IP_ALREADY_CONNECTED') {
-                console.log(`IP duplicate detected for ${name}, existing player: ${result.existingPlayer}`);
-                socket.emit('error', {
-                    type: 'IP_ALREADY_CONNECTED',
-                    message: `该IP已有玩家"${result.existingPlayer}"在线，请关闭旧窗口后重试`
-                });
-            }
-            return;
-        }
-        
-        console.log(`Player ${name} joined successfully`);
         broadcastState();
     });
 
@@ -122,6 +90,7 @@ io.on('connection', (socket) => {
             lobby.startGame();
             broadcastState();
         } catch (e: any) {
+            console.log('Game started:', e);
             socket.emit('error', e.message);
         }
     });
@@ -295,9 +264,6 @@ io.on('connection', (socket) => {
 const PORT = 3001;
 httpServer.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Environment: ${IS_PRODUCTION ? 'PRODUCTION' : 'DEVELOPMENT'}`);
-    console.log(`IP Restriction: ${IS_PRODUCTION ? 'ENABLED' : 'DISABLED'}`);
-    console.log(`Account Restriction: ${IS_PRODUCTION ? 'ENABLED' : 'DISABLED'}`);
 });
 
 process.on('uncaughtException', (error) => {

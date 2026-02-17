@@ -32,7 +32,6 @@ export const GameState = {
     Turn: 'TURN',
     River: 'RIVER',
     Showdown: 'SHOWDOWN',
-    Finished: 'FINISHED'
 } as const;
 
 export type GameState = typeof GameState[keyof typeof GameState];
@@ -49,6 +48,7 @@ export interface PlayerView {
     currentBet: number;
     status: PlayerStatus;
     hand?: Card[];
+    hasHand: boolean;
     isSelf: boolean;
     position: number;
     isDealer: boolean;
