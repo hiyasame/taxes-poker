@@ -1,74 +1,34 @@
-
-import { Game, GameState } from './Game';
-import { Player, PlayerStatus } from '../models/Player';
-import { GameView, PlayerView } from '../models/Views';
-import { HandEvaluator } from './HandEvaluator';
+import {Game, GameState} from './Game';
+import {Player, PlayerStatus} from '../models/Player';
+import {GameView, PlayerView} from '../models/Views';
+import {HandEvaluator} from './HandEvaluator';
 
 export class Lobby {
     public game: Game;
-    private enableIpRestriction: boolean;
-    private readonly MAX_PLAYERS = Infinity;
     private readonly MAX_TABLE_SEATS = 12;
     private disconnectTimer: NodeJS.Timeout | null = null;
-    private disconnectedPlayers: Set<string> = new Set();
+    public disconnectedPlayers: Set<string> = new Set();
     public isPaused: boolean = false;
     private viewRequestsMap: Map<string, Set<string>> = new Map();
 
-    constructor(enableIpRestriction: boolean = false) {
+    constructor() {
         this.game = new Game();
-        this.enableIpRestriction = enableIpRestriction;
     }
 
-    addPlayer(id: string, name: string, stack: number, ip: string = '', username: string = '', password: string = ''): Player | { error: string; existingPlayer?: string } | { player: Player; allReconnected: boolean } {
-        const existing = this.game.players.find(p => p.id === id);
-        if (existing) {
-            existing.isConnected = true;
-            
-            // 如果是等待重连的玩家，从掉线列表中移除
-            const wasDisconnected = this.disconnectedPlayers.has(id);
-            console.log(`Player ${name} reconnecting. Was disconnected: ${wasDisconnected}, Disconnected count before: ${this.disconnectedPlayers.size}`);
-            
-            if (wasDisconnected) {
-                this.disconnectedPlayers.delete(id);
-                console.log(`Disconnected count after removing: ${this.disconnectedPlayers.size}, isPaused: ${this.isPaused}`);
-                
-                // 如果所有掉线的玩家都重连了，取消暂停
-                if (this.disconnectedPlayers.size === 0 && this.isPaused) {
-                    console.log('All players reconnected! Clearing timer and resuming game');
-                    if (this.disconnectTimer) {
-                        clearTimeout(this.disconnectTimer);
-                        this.disconnectTimer = null;
-                        console.log('Timer cleared');
-                    }
-                    this.isPaused = false;
-                    
-                    return { player: existing, allReconnected: true };
-                }
-            }
-            
-            return existing;
-        }
+    addPlayer(id: string, name: string, stack: number, password: string): Player | { error: string; existingPlayer?: string } | { player: Player; allReconnected: boolean } {
+        const oldPlayer = this.game.players.find(p => p.name === name);
+        if (oldPlayer) {
+            const oldId = oldPlayer.id;
+            oldPlayer.id = id;
+            oldPlayer.isConnected = true;
 
-        if (this.enableIpRestriction) {
-            const sameIpPlayer = this.game.players.find(p => p.ip === ip && p.isConnected);
-            if (sameIpPlayer && ip) {
-                return { error: 'IP_ALREADY_CONNECTED', existingPlayer: sameIpPlayer.name };
-            }
-        }
-
-        // 通过用户名查找掉线的玩家（更可靠）
-        const disconnectedPlayer = this.game.players.find(p => p.username === username && !p.isConnected);
-        if (disconnectedPlayer && username) {
-            const oldId = disconnectedPlayer.id;
-            disconnectedPlayer.id = id;
-            disconnectedPlayer.isConnected = true;
-            
             // 检查是否在掉线列表中（使用旧ID）
             const wasDisconnected = this.disconnectedPlayers.has(oldId);
             console.log(`Player ${name} reconnecting via username. Was disconnected: ${wasDisconnected}, Disconnected count before: ${this.disconnectedPlayers.size}`);
             
             if (wasDisconnected) {
                 this.disconnectedPlayers.delete(oldId);
+
                 console.log(`Disconnected count after removing: ${this.disconnectedPlayers.size}, isPaused: ${this.isPaused}`);
                 
                 // 如果所有掉线的玩家都重连了，取消暂停
@@ -81,23 +41,21 @@ export class Lobby {
                     }
                     this.isPaused = false;
                     
-                    return { player: disconnectedPlayer, allReconnected: true };
+                    return { player: oldPlayer, allReconnected: true };
                 }
             }
             
-            return disconnectedPlayer;
+            return oldPlayer;
         }
 
-        const connectedCount = this.game.players.filter(p => p.isConnected).length;
-        
-        const seatedPlayers = this.game.players.filter(p => !p.isSpectator && p.isConnected);
+        const seatedPlayers = this.game.players.filter(p => !p.isSpectator);
         const seatedCount = seatedPlayers.length;
         const isSpectator = seatedCount >= this.MAX_TABLE_SEATS;
 
-        const isGameInProgress = this.game.state !== GameState.Waiting && this.game.state !== GameState.Finished;
+        const isGameInProgress = this.game.state !== GameState.Waiting;
         const shouldBeSpectator = isSpectator || isGameInProgress;
         
-        const player = new Player(id, name, stack, shouldBeSpectator, ip, username, password);
+        const player = new Player(id, name, stack, shouldBeSpectator, password);
         
         if (!shouldBeSpectator) {
             for (let i = 0; i < this.MAX_TABLE_SEATS; i++) {
@@ -166,7 +124,6 @@ export class Lobby {
         }
 
         player.isSpectator = true;
-        player.status = PlayerStatus.Spectator;
         player.isReady = false;
         player.seatIndex = -1;
         return { success: true };
@@ -182,6 +139,10 @@ export class Lobby {
             return { success: false, message: '观战者无法准备' };
         }
 
+        if (!player.isReady && player.stack < 20) {
+            return { success: false, message: '剩余钱不够: ' + player.stack };
+        }
+
         if (this.game.state !== GameState.Waiting) {
             return { success: false, message: '游戏进行中' };
         }
@@ -192,30 +153,34 @@ export class Lobby {
 
     removePlayer(id: string): { shouldWait: boolean; playerName?: string; isAlreadyWaiting?: boolean } {
         const player = this.game.players.find(p => p.id === id);
-        if (player) {
-            player.isConnected = false;
+        if (!player) {
+            return { shouldWait: false };
         }
 
         // 如果游戏进行中且有人退出，启动10秒倒计时
-        const connectedPlayers = this.game.players.filter(p => p.isConnected && !p.isSpectator);
-        const isGameInProgress = this.game.state !== GameState.Waiting && this.game.state !== GameState.Finished;
-        
-        if (isGameInProgress && player && !player.isSpectator) {
+        const isGameInProgress = this.game.state !== GameState.Waiting;
+
+        if (isGameInProgress && this.game.initActivePlayers.map(p => p.name).indexOf(player.name) >= 0) {
             // 添加到掉线玩家列表
             this.disconnectedPlayers.add(id);
-            
+            player.isConnected = false;
+
             // 如果已经在等待中，不重置倒计时
             if (this.isPaused) {
                 return { shouldWait: true, playerName: player.name, isAlreadyWaiting: true };
             }
-            
+
             // 暂停游戏，等待玩家重连
             this.isPaused = true;
-            
+
             return { shouldWait: true, playerName: player.name, isAlreadyWaiting: false };
+        } else {
+            // 其余情况就移除 player
+            this.game.players = this.game.players.filter(p => p.id !== id);
         }
-        
+
         // 如果玩家数 < 2，回到等待状态
+        const connectedPlayers = this.game.players.filter(p => p.isReady);
         if (connectedPlayers.length < 2) {
             this.game.state = GameState.Waiting;
             this.resetGameData();
@@ -262,7 +227,8 @@ export class Lobby {
             p.hand = [];
             p.currentBet = 0;
             p.totalBetThisRound = 0;
-            if (p.stack > 0) p.status = PlayerStatus.Active;
+            p.status = PlayerStatus.Active;
+            p.isReady = false;
         });
     }
 
@@ -274,12 +240,12 @@ export class Lobby {
             .sort((a, b) => a.seatIndex - b.seatIndex)
             .map((p) => {
                 let handToShow = undefined;
-                if (p.id === playerId) {
+                if (p.name === player!.name) {
                     handToShow = p.hand;
                 } else if (p.allowedViewers.has(playerId) && this.game.state === GameState.Waiting) {
                     handToShow = p.hand;
                 }
-                
+
                 return {
                     id: p.id,
                     name: p.name,
@@ -287,12 +253,12 @@ export class Lobby {
                     currentBet: p.currentBet,
                     status: p.status,
                     hand: handToShow,
+                    hasHand: this.game.initActivePlayers.map(p => p.name).indexOf(p.name) >= 0,
                     isSelf: p.id === playerId,
                     position: p.seatIndex,
                     isDealer: p.seatIndex === this.game.dealerIndex,
                     isCurrentTurn: p.id === this.game.currentTurnPlayerId &&
                         this.game.state !== GameState.Waiting &&
-                        this.game.state !== GameState.Finished &&
                         this.game.state !== GameState.Showdown,
                     lastAction: p.lastAction,
                     totalContributed: p.totalContributed,
@@ -310,8 +276,8 @@ export class Lobby {
                 stack: p.stack,
                 currentBet: 0,
                 status: p.status,
+                hasHand: false,
                 isSelf: p.id === playerId,
-                position: -1,
                 isDealer: false,
                 isCurrentTurn: false,
                 totalContributed: 0,
@@ -431,11 +397,5 @@ export class Lobby {
         requests.delete(requesterId);
 
         return { success: true };
-    }
-
-    getPendingViewRequests(playerId: string): string[] {
-        const requests = this.viewRequestsMap.get(playerId);
-        if (!requests) return [];
-        return Array.from(requests);
     }
 }

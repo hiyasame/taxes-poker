@@ -1,5 +1,4 @@
 import React from 'react';
-import { UserPlus } from 'lucide-react';
 
 export const EmptySeat: React.FC<{ 
     seatIndex: number;
@@ -15,9 +14,6 @@ export const EmptySeat: React.FC<{
             
             <div className="player-info-card glass border-dashed border-2 border-white/30">
                 <div className="player-main-info">
-                    <div className="player-avatar bg-white/5">
-                        <UserPlus size={16} className="text-white/40" />
-                    </div>
                     <div className="player-text-info">
                         <span className="player-name text-white/40">
                             {canTakeSeat ? `座位 ${seatIndex}` : '空位'}

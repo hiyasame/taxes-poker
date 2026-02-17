@@ -9,7 +9,10 @@ import { Card } from './components/Card';
 import { Users, Bell, Coins, X } from 'lucide-react';
 import './App.css';
 
-const socket: Socket = io({
+// const SOCKET_URL = `http://${window.location.hostname}:3001`; // 本地测试
+const SOCKET_URL = undefined; // 上线使用
+
+const socket: Socket = io(SOCKET_URL, {
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionAttempts: 10
@@ -25,8 +28,21 @@ const PokerTable: React.FC = () => {
     const [notification, setNotification] = useState<{ message: string, type: 'info' | 'alert' } | null>(null);
     const [joinError, setJoinError] = useState<string>('');
     const [isConnected, setIsConnected] = useState(false);
+    const [waitingReconnect, setWaitingReconnect] = useState<{ playerName: string; countdown: number } | null>(null);
+    const [viewHandRequest, setViewHandRequest] = useState<{ requesterId: string; requesterName: string } | null>(null);
     const lastStateRef = useRef<GameView | null>(null);
     const loginCredentials = useRef<{ username: string; password: string } | null>(null);
+    const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+    // 加载保存的账号密码
+    useEffect(() => {
+        const savedUsername = localStorage.getItem('poker_username');
+        const savedPassword = localStorage.getItem('poker_password');
+        if (savedUsername && savedPassword) {
+            setName(savedUsername);
+            setPassword(savedPassword);
+        }
+    }, []);
 
     const notify = (message: string, type: 'info' | 'alert' = 'info') => {
         setNotification({ message, type });
@@ -97,16 +113,97 @@ const PokerTable: React.FC = () => {
             }
         };
 
+        const handlePlayerLeft = (data: { playerName: string; message: string }) => {
+            notify(data.message, 'alert');
+            setWaitingReconnect(null);
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+                countdownIntervalRef.current = null;
+            }
+        };
+
+        const handleWaitingForReconnect = (data: { playerName: string; message: string; countdown: number }) => {
+            notify(data.message, 'alert');
+            setWaitingReconnect({ playerName: data.playerName, countdown: data.countdown });
+            
+            // 启动倒计时
+            let timeLeft = data.countdown;
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+            }
+            countdownIntervalRef.current = setInterval(() => {
+                timeLeft -= 1;
+                setWaitingReconnect(prev => prev ? { ...prev, countdown: timeLeft } : null);
+                if (timeLeft <= 0 && countdownIntervalRef.current) {
+                    clearInterval(countdownIntervalRef.current);
+                    countdownIntervalRef.current = null;
+                }
+            }, 1000);
+        };
+
+        const handleAdditionalPlayerLeft = (data: { playerName: string; message: string }) => {
+            notify(data.message, 'alert');
+            // 不改变倒计时，继续等待
+        };
+
+        const handleAllPlayersReconnected = (data: { message: string }) => {
+            notify(data.message, 'info');
+            setWaitingReconnect(null);
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+                countdownIntervalRef.current = null;
+            }
+        };
+
+        const handlePlayerReconnected = (data: { playerName: string; message: string }) => {
+            notify(data.message, 'info');
+        };
+
+        const handleViewHandRequest = (data: { requesterId: string; requesterName: string }) => {
+            console.log('Received viewHandRequest:', data);
+            console.log('Current viewHandRequest state:', viewHandRequest);
+            setViewHandRequest(data);
+            notify(`${data.requesterName} 想要查看你的手牌`, 'alert');
+        };
+
+        const handleViewHandApproved = (data: { targetId: string; targetName: string }) => {
+            notify(`${data.targetName} 同意了你的查看请求`, 'info');
+        };
+
+        const handleViewHandDenied = (data: { targetId: string; targetName: string }) => {
+            notify(`${data.targetName} 拒绝了你的查看请求`, 'info');
+        };
+
         socket.on('connect', handleConnect);
         socket.on('disconnect', handleDisconnect);
         socket.on('state', handleState);
         socket.on('error', handleError);
+        socket.on('playerLeft', handlePlayerLeft);
+        socket.on('waitingForReconnect', handleWaitingForReconnect);
+        socket.on('additionalPlayerLeft', handleAdditionalPlayerLeft);
+        socket.on('playerReconnected', handlePlayerReconnected);
+        socket.on('allPlayersReconnected', handleAllPlayersReconnected);
+        socket.on('viewHandRequest', handleViewHandRequest);
+        socket.on('viewHandApproved', handleViewHandApproved);
+        socket.on('viewHandDenied', handleViewHandDenied);
 
         return () => {
             socket.off('connect', handleConnect);
             socket.off('disconnect', handleDisconnect);
             socket.off('state', handleState);
             socket.off('error', handleError);
+            socket.off('playerLeft', handlePlayerLeft);
+            socket.off('waitingForReconnect', handleWaitingForReconnect);
+            socket.off('additionalPlayerLeft', handleAdditionalPlayerLeft);
+            socket.off('playerReconnected', handlePlayerReconnected);
+            socket.off('allPlayersReconnected', handleAllPlayersReconnected);
+            socket.off('viewHandRequest', handleViewHandRequest);
+            socket.off('viewHandApproved', handleViewHandApproved);
+            socket.off('viewHandDenied', handleViewHandDenied);
+            
+            if (countdownIntervalRef.current) {
+                clearInterval(countdownIntervalRef.current);
+            }
         };
     }, [joined]);
 
@@ -114,6 +211,11 @@ const PokerTable: React.FC = () => {
         if (name && password) {
             setJoinError('');
             loginCredentials.current = { username: name, password };
+            
+            // 保存账号密码到 localStorage
+            localStorage.setItem('poker_username', name);
+            localStorage.setItem('poker_password', password);
+            
             socket.emit('login', { username: name, password });
         }
     };
@@ -143,6 +245,32 @@ const PokerTable: React.FC = () => {
         socket.emit('leaveTable');
     };
 
+    const handleRequestViewHand = (targetPlayerId: string) => {
+        console.log('Requesting to view hand of:', targetPlayerId);
+        if (game?.state === GameState.Waiting) {
+            socket.emit('requestViewHand', targetPlayerId);
+            notify('已发送查看手牌请求', 'info');
+        } else {
+            console.log('Game state is not Waiting:', game?.state);
+        }
+    };
+
+    const handleApproveViewRequest = () => {
+        if (viewHandRequest) {
+            socket.emit('approveViewRequest', viewHandRequest.requesterId);
+            notify(`已同意 ${viewHandRequest.requesterName} 的查看请求`, 'info');
+            setViewHandRequest(null);
+        }
+    };
+
+    const handleDenyViewRequest = () => {
+        if (viewHandRequest) {
+            socket.emit('denyViewRequest', viewHandRequest.requesterId);
+            notify(`已拒绝 ${viewHandRequest.requesterName} 的查看请求`, 'info');
+            setViewHandRequest(null);
+        }
+    };
+
     const getPlayerAtSeat = (seatIndex: number) => {
         if (!game) return null;
         return game.players.find(p => p.seatIndex === seatIndex);
@@ -156,34 +284,34 @@ const PokerTable: React.FC = () => {
     if (!joined) {
         return (
             <div id="mobile-container" className="flex items-center justify-center">
-                <div className="glass p-8 m-4 w-full max-w-xs text-center animate-zoom-in">
-                    <h1 className="text-2xl font-black text-yellow-500 mb-6 font-outfit">联机德州扑克</h1>
+                <div className="glass login-panel">
+                    <h1 className="login-title">联机德州扑克</h1>
                     {joinError && (
-                        <div className="mb-4 p-3 bg-red-500/20 border border-red-500 rounded-xl text-red-400 text-sm">
+                        <div className="login-error">
                             {joinError}
                         </div>
                     )}
                     <input
                         type="text"
                         placeholder="账号（用户名）"
-                        className="w-full p-3 rounded-xl bg-white/10 border border-white/20 text-white mb-3 outline-none focus:border-yellow-500"
+                        className="login-input"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                     />
                     <input
                         type="password"
                         placeholder="密码"
-                        className="w-full p-3 rounded-xl bg-white/10 border border-white/20 text-white mb-4 outline-none focus:border-yellow-500"
+                        className="login-input"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                     />
                     <button
                         onClick={handleJoin}
-                        className="w-full py-4 bg-yellow-500 text-black font-black rounded-xl shadow-lg active:scale-95 transition-all outline-none"
+                        className="login-button"
                     >
                         登录 / 注册
                     </button>
-                    <div className="mt-3 text-xs text-white/40">
+                    <div className="login-hint">
                         首次登录自动注册 · 财产自动保存
                     </div>
                 </div>
@@ -194,14 +322,61 @@ const PokerTable: React.FC = () => {
     if (!game) return <div className="text-white flex items-center justify-center h-full">正在连接服务器...</div>;
 
     const hero = game.me;
-    const minRaise = game.currentMaxBet * 2 || 40;
+    const minRaise = game.currentMaxBet || 10;
     const maxRaise = hero?.stack || 0;
 
     return (
         <div id="mobile-container" className="relative overflow-hidden">
+            {/* 查看手牌请求弹窗 */}
+            {viewHandRequest && (
+                <div className="modal-overlay">
+                    <div className="glass view-hand-modal-content">
+                        <div className="view-hand-icon">👀</div>
+                        <div className="view-hand-title">
+                            查看手牌请求
+                        </div>
+                        <div className="view-hand-message">
+                            <span className="view-hand-requester">{viewHandRequest.requesterName}</span> 想要查看你的手牌
+                        </div>
+                        <div className="view-hand-buttons">
+                            <button
+                                onClick={handleDenyViewRequest}
+                                className="view-hand-deny-button"
+                            >
+                                拒绝
+                            </button>
+                            <button
+                                onClick={handleApproveViewRequest}
+                                className="view-hand-approve-button"
+                            >
+                                同意
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 等待重连遮罩 */}
+            {waitingReconnect && (
+                <div className="reconnect-overlay">
+                    <div className="glass reconnect-modal-content">
+                        <div className="reconnect-icon">⏳</div>
+                        <div className="reconnect-title">
+                            等待 {waitingReconnect.playerName} 重连
+                        </div>
+                        <div className="reconnect-countdown">
+                            {waitingReconnect.countdown}s
+                        </div>
+                        <div className="reconnect-message">
+                            游戏已暂停,请等待玩家重新连接...
+                        </div>
+                    </div>
+                </div>
+            )}
+            
             {!isConnected && (
-                <div className="absolute top-2 right-2 z-50 glass px-3 py-1 rounded-full animate-pulse">
-                    <div className="flex items-center gap-2 text-red-400 text-xs font-bold">
+                <div className="glass connection-status">
+                    <div className="connection-status-inner">
                         🔴 重连中...
                     </div>
                 </div>
@@ -215,8 +390,8 @@ const PokerTable: React.FC = () => {
             )}
 
             {game.isSpectator && (
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 z-50 glass px-4 py-2 rounded-full animate-fade-in-down">
-                    <div className="flex items-center gap-2 text-yellow-500 text-xs font-bold">
+                <div className="glass spectator-badge">
+                    <div className="spectator-badge-inner">
                         <Users size={14} />
                         观战中 - 本局结束后加入
                     </div>
@@ -226,11 +401,30 @@ const PokerTable: React.FC = () => {
             <div className="poker-table">
                 <div className="poker-felt-texture" />
 
-                <div className="pot-pos text-center w-full scale-90">
-                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-widest">TOTAL POT</span>
-                    <div className="text-3xl font-black text-yellow-500 flex items-center justify-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-yellow-500 border-2 border-yellow-200 shadow-inner flex items-center justify-center">
-                            <Coins size={12} className="text-yellow-900" />
+                {/* 当前操作玩家提示 */}
+                {game.state !== GameState.Waiting && (() => {
+                    const currentPlayer = game.players.find(p => p.isCurrentTurn);
+                    if (currentPlayer) {
+                        const callAmount = game.currentMaxBet - (currentPlayer.currentBet || 0);
+                        return (
+                            <div className="glass current-player-indicator">
+                                <div className="current-player-text">
+                                    {currentPlayer.isSelf
+                                        ? (callAmount > 0
+                                            ? `等待您操作... (需跟注 $${callAmount})`
+                                            : '等待您操作...')
+                                        : `等待 ${currentPlayer.name} 操作...`}
+                                </div>
+                            </div>
+                        );
+                    }
+                })()}
+
+                <div className="pot-pos text-center w-full scale-75">
+                    <span className="pot-header">TOTAL POT</span>
+                    <div className="pot-amount">
+                        <div className="pot-icon">
+                            <Coins size={10} className="text-yellow-900" />
                         </div>
                         ${game.pot}
                     </div>
@@ -246,30 +440,59 @@ const PokerTable: React.FC = () => {
                     ))}
                 </div>
 
+                {/* 上一局结算信息 */}
+                {game.state === GameState.Waiting && game.lastRoundResults && game.lastRoundResults.length > 0 && (
+                    <div className="settlement-info-pos">
+                        <div className="glass rounded-xl p-3 border border-white/20">
+                            <div className="settlement-header">
+                                上局结算
+                            </div>
+                            <div className="settlement-list">
+                                {game.lastRoundResults.map((result) => (
+                                    <div key={result.playerId} className="settlement-item">
+                                        <span className="settlement-player-name">
+                                            {result.playerName}
+                                        </span>
+                                        <span className={
+                                            result.winAmount > 0
+                                                ? 'settlement-amount-win'
+                                                : result.winAmount < 0
+                                                ? 'settlement-amount-lose'
+                                                : 'settlement-amount-neutral'
+                                        }>
+                                            {result.winAmount > 0 ? '+' : ''}{result.winAmount}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="absolute inset-0 pointer-events-none">
                     {/* 12个座位时钟式布局 - 相对视角 */}
                     {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(visualSeat => {
                         // 计算这个视觉位置对应的实际座位索引
-                        const actualSeat = hero && !hero.isSpectator
-                            ? (visualSeat - (6 - hero.seatIndex) + 12) % 12
+                        const actualSeat = hero && !hero.isSpectator 
+                            ? (visualSeat - (6 - hero.seatIndex) + 12) % 12 
                             : visualSeat;
                         const player = getPlayerAtSeat(actualSeat);
-
+                        
                         return (
                             <div key={visualSeat} className={`seat-${visualSeat}`}>
                                 {player ? (
-                                    <Player
-                                        player={player}
+                                    <Player 
+                                        player={player} 
                                         onViewCards={player.isSelf ? handleViewCards : undefined}
-                                        gameState={game.state}
+                                        onRequestViewHand={!player.isSelf ? handleRequestViewHand : undefined}
+                                        gameState={game.state} 
                                     />
                                 ) : (
-                                    // 只在等待状态下显示空座位
                                     game.state === GameState.Waiting && (
-                                        <EmptySeat
-                                            seatIndex={actualSeat}
-                                            canTakeSeat={canTakeSeat()}
-                                            onTakeSeat={handleChangeSeat}
+                                        <EmptySeat 
+                                            seatIndex={actualSeat} 
+                                            canTakeSeat={canTakeSeat()} 
+                                            onTakeSeat={handleChangeSeat} 
                                         />
                                     )
                                 )}
@@ -279,136 +502,147 @@ const PokerTable: React.FC = () => {
                 </div>
             </div>
 
-            <div className={`p-4 glass ${showRaiseUI ? 'opacity-20 pointer-events-none' : ''} m-2 mb-4 flex flex-col gap-3 transition-opacity`}>
+            <div className={`glass action-bar ${showRaiseUI ? 'disabled' : ''}`}>
                 {game.isSpectator ? (
-                    <div className="flex flex-col items-center gap-3 py-2">
-                        <div className="text-yellow-500 font-bold text-lg">👁️ 观战模式</div>
-                        <div className="text-xs text-white/60 text-center mb-2">
+                    <div className="spectator-display">
+                        <div className="spectator-title">👁️ 观战模式</div>
+                        <div className="spectator-stats">
                             在线: {game.players.length + game.spectators.length} 人 | 座位: {game.players.length}/{12} | 观战: {game.spectators.length}
                         </div>
-                        <div className="text-xs text-white/40 text-center">
+                        <div className="spectator-hint">
                             {game.state !== GameState.Waiting ? '游戏进行中，请等待本局结束' : '点击空座位入座'}
                         </div>
                     </div>
-                ) : game.state !== GameState.Waiting && game.state !== GameState.Finished ? (
+                ) : game.state !== GameState.Waiting ? (
                     <>
-                        <div className="flex justify-between items-center px-1">
-                            <span className="text-xs text-white/60">
-                                手牌: <span className="text-yellow-500 font-bold">
+                        <div className="hand-info-bar">
+                            <span className="hand-info-item">
+                                手牌: <span className="hand-info-value">
                                     {hero?.hasViewedCards ? (game.currentHandType || '等待中') : '未查看'}
                                 </span>
                             </span>
-                            <span className="text-xs text-white/60">
-                                当前注: <span className="text-white font-bold">${hero?.currentBet || 0}</span>
+                            <span className="hand-info-item">
+                                当前注: <span className="current-bet-value">${hero?.currentBet || 0}</span>
                             </span>
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="action-buttons-grid">
                             <button
                                 onClick={() => handleAction('fold')}
-                                className="py-3 rounded-xl bg-gray-800 font-bold border border-white/10 text-red-500 shadow-lg active:scale-95"
+                                className="action-button action-button-fold"
                             >
                                 弃牌
                             </button>
                             <button
                                 onClick={() => handleAction(game.currentMaxBet === (hero?.currentBet || 0) ? 'check' : 'call')}
-                                className="py-3 rounded-xl bg-blue-600 font-bold shadow-lg active:scale-95"
+                                className="action-button action-button-check-call"
                             >
                                 {game.currentMaxBet === (hero?.currentBet || 0) ? '过牌' : '跟注'}
                             </button>
                             <button
                                 onClick={() => {
-                                    setRaiseAmount(Math.max(minRaise, game.currentMaxBet + 20));
+                                    setRaiseAmount(Math.max(minRaise, game.currentMaxBet + 10));
                                     setShowRaiseUI(true);
                                 }}
-                                className="py-3 rounded-xl bg-green-600 font-bold shadow-lg active:scale-95"
+                                className="action-button action-button-raise"
                             >
                                 加注
                             </button>
                         </div>
                     </>
                 ) : (
-                    <div className="flex flex-col items-center gap-3">
-                        <div className="text-xs text-white/40 mb-1 flex items-center gap-1">
-                            <Users size={12} /> 在线: {game.players.length + game.spectators.length} | 座位: {game.players.length}/{12} | 观战: {game.spectators.length}
+                    <div className="waiting-room">
+                        <div className="online-stats">
+                            <Users size={12} /> 在线: {game.players.length + game.spectators.length} | 座位: {game.players.length}/{12} | 观战: {game.spectators.length} | 准备: {game.players.filter(p => p.isReady).length}/{game.players.length}
                         </div>
-
-                        <div className="w-full grid grid-cols-2 gap-2">
+                        
+                        <div className="waiting-room-all-buttons">
                             <button
                                 onClick={handleToggleReady}
-                                className={`py-3 rounded-xl font-bold shadow-lg active:scale-95 ${hero?.isReady
-                                    ? 'bg-green-600 text-white'
-                                    : 'bg-gray-700 text-white/60'
-                                    }`}
+                                className={`ready-button ${
+                                    hero?.isReady 
+                                        ? 'ready-button-active' 
+                                        : 'ready-button-inactive'
+                                }`}
                             >
                                 {hero?.isReady ? '✓ 已准备' : '准备'}
                             </button>
                             <button
+                                onClick={handleStart}
+                                disabled={game.players.filter(p => !p.isSpectator && !p.isReady).length !== 0}
+                                className={`start-game-button ${
+                                    game.players.filter(p => !p.isSpectator && !p.isReady).length === 0
+                                        ? 'start-game-button-enabled'
+                                        : 'start-game-button-disabled'
+                                }`}
+                            >
+                                开始游戏
+                            </button>
+                            <button
                                 onClick={handleLeaveTable}
-                                className="py-3 rounded-xl bg-gray-600 text-white font-bold shadow-lg active:scale-95"
+                                className="leave-table-button"
                             >
                                 去观战
                             </button>
                         </div>
-
-                        <div className="text-xs text-white/40 text-center">
-                            准备人数: {game.players.filter(p => p.isReady).length}/{game.players.length}
-                        </div>
-
-                        <button
-                            onClick={handleStart}
-                            disabled={game.players.filter(p => p.isReady).length < 2}
-                            className={`py-4 w-full rounded-2xl font-black text-lg shadow-lg active:scale-95 transition-all ${game.players.filter(p => p.isReady).length >= 2
-                                ? 'bg-yellow-500 text-black shadow-[0_0_25px_rgba(245,158,11,0.4)]'
-                                : 'bg-gray-700 text-white/40 cursor-not-allowed'
-                                }`}
-                        >
-                            开始游戏
-                        </button>
                     </div>
                 )}
             </div>
 
             {showRaiseUI && (
                 <div className="raise-ui-overlay">
-                    <div className="flex justify-between items-center mb-4">
-                        <span className="text-sm font-bold text-yellow-500 flex items-center gap-2">
+                    <div className="raise-ui-header">
+                        <span className="raise-ui-title">
                             <Coins size={16} /> 加注金额
                         </span>
-                        <button onClick={() => setShowRaiseUI(false)} className="p-1 rounded-full bg-white/10">
+                        <button onClick={() => setShowRaiseUI(false)} className="raise-ui-close">
                             <X size={18} />
                         </button>
                     </div>
 
-                    <div className="text-4xl font-black text-center text-white mb-6">
+                    <div className="raise-amount-display">
                         ${raiseAmount}
                     </div>
 
-                    <div className="raise-slider-container">
-                        <input
-                            type="range"
-                            min={minRaise}
-                            max={maxRaise}
-                            step={10}
-                            value={raiseAmount}
-                            onChange={(e) => setRaiseAmount(parseInt(e.target.value))}
-                            className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-yellow-500"
-                        />
-                        <div className="flex justify-between text-[10px] text-white/40 font-bold">
-                            <span>MIN ${minRaise}</span>
-                            <span>MAX ${maxRaise}</span>
+                    <div className="raise-amount-controls">
+                        <button
+                            className="raise-control-button"
+                            onClick={() => setRaiseAmount(Math.max(minRaise, raiseAmount - 10))}
+                        >
+                            -
+                        </button>
+                        <div className="raise-slider-container">
+                            <input
+                                type="range"
+                                min={minRaise}
+                                max={maxRaise}
+                                step={10}
+                                value={raiseAmount}
+                                onChange={(e) => setRaiseAmount(parseInt(e.target.value))}
+                                className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                            />
+                            <div className="raise-slider-labels">
+                                <span>MIN ${minRaise}</span>
+                                <span>MAX ${maxRaise}</span>
+                            </div>
                         </div>
+                        <button
+                            className="raise-control-button"
+                            onClick={() => setRaiseAmount(Math.min(maxRaise, raiseAmount + 10))}
+                        >
+                            +
+                        </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 mt-4">
+                    <div className="raise-action-buttons">
                         <button
                             onClick={() => setRaiseAmount(maxRaise)}
-                            className="py-3 rounded-xl bg-red-600 text-white font-black text-sm uppercase"
+                            className="raise-allin-button"
                         >
                             ALL IN!
                         </button>
                         <button
                             onClick={() => handleAction('raise', raiseAmount)}
-                            className="py-3 rounded-xl bg-yellow-500 text-black font-black text-sm uppercase"
+                            className="raise-confirm-button"
                         >
                             确认加注
                         </button>

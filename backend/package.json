@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/src/server.js",
+    "server": "tsc && node dist/src/server.js",
     "test": "jest"
   },
   "keywords": [],
