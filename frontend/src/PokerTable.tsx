@@ -32,7 +32,7 @@ const PokerTable: React.FC = () => {
     const [viewHandRequest, setViewHandRequest] = useState<{ requesterId: string; requesterName: string } | null>(null);
     const lastStateRef = useRef<GameView | null>(null);
     const loginCredentials = useRef<{ username: string; password: string } | null>(null);
-    const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const countdownIntervalRef = useRef<any | null>(null);
 
     // 加载保存的账号密码
     useEffect(() => {
